@@ -2,6 +2,7 @@ from collections import namedtuple
 __version__ = "1.0"
 __build__ = "Latest"
 __platform__ = "Experimental"
+print("You are using an experimental build. Things migth be buggy.")
 class Comment:
 	'''Add a comment.'''
 	isComment = True
