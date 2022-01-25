@@ -1,5 +1,5 @@
 from collections import namedtuple
-__version__ = "1.0"
+__version__ = "1.0.2"
 __build__ = "Latest"
 __platform__ = "Experimental"
 print("You are using an experimental build. Things migth be buggy.")
@@ -8,6 +8,9 @@ class Comment:
 	isComment = True
 	visComment = __name__
 	uuid = object()
+class FLAGS:
+	ONELINE = 3
+	NO_VERIFY = 4
 class SCONDecodeError(Exception):
 	pass
 def verify(data,x=0,y=0):
@@ -16,15 +19,17 @@ def verify(data,x=0,y=0):
 			verify(data[i],y=y+1)
 		if i == '':
 			raise SCONDecodeError("Extraneous ; found "+str(x) + "," + str(y))
-def parse(text):
+def parse(text,use_verify=True):
 	__doc__ = '''The parser, Used internally'''
 	result = {}
 	tree = []
 	comments = []
+	commentlines = []
 	parsed = result
 	listmode = False
 	mode = 0
 	ldepth = 0
+	y = 0
 	name = ""
 	value = ""
 	string = False
@@ -66,7 +71,7 @@ def parse(text):
 		elif cw == ";":
 			if string:
 				value += ';'
-			else:
+			elif wastring == False:
 				if value.isnumeric():
 					value = int(value)
 				elif value.lower() == 'true':
@@ -76,7 +81,7 @@ def parse(text):
 				elif value.lower() == 'null':
 					value = None
 			if mode == 2:
-				comments.append(comment)
+				comments.append((comment,y))
 				comment = ''
 				mode = 0
 				cw = ''
@@ -150,9 +155,11 @@ def parse(text):
 			tree.pop(len(tree)-1)
 			cw = ''
 			wastring = False
-			if type(tree[ldepth-1]) == dict:
-				value = ''
-				name = ''
+			print('t',tree)
+			if len(tree) != 0:
+				if type(tree[ldepth-1]) == dict:
+					value = ''
+					name = ''
 			waslist = True
 			ldepth -= 1
 		elif cw == "#":
@@ -167,38 +174,63 @@ def parse(text):
 				comment += cw
 			cw = ''
 	f = namedtuple("result",['data','comments'])
-	verify(result)
+	if use_verify:
+		verify(result)
 	return f(data=result,comments=comments)
-def make(data,ind=0,comments=[]):
+def make(data,ind=0,comments=[],nl=True):
 	made = ''
 	for i in data:
-		if 'isComment' in dir(i):
-			if i.visComment == __name__:
-				made += '\t'*ind+'#'+data[i] + ';\n' 
-		elif type(data[i]) == int:
-			made += '\t'*ind+i + '=' + str(data[i]) + ';\n'
-		elif type(data[i]) == str:
-			made += '\t'*ind+i + '="' + data[i] + '";\n'
-		elif type(data[i]) == bool:
-			made += '\t'*ind+i + '=' + str(data[i]).lower() + ';\n'
-		elif data[i] == None:
-			made += '\t'*ind+i + '=' + 'null;\n'
-		elif type(data[i]) == float:
-			made += '\t'*ind+i + '="' + data[i] + '";\n'
-		elif type(data[i]) == dict:
-			made += '\t'*ind+i+'{\n'+make(data[i],ind+1)+'\t'*ind+'}\n'
-		elif type(data[i]) == list:
-			made += '\t'*ind+i+'='+data[i].__repr__().replace("'",'"')+';\n'
+		if nl:
+			if 'isComment' in dir(i):
+				if i.visComment == __name__:
+					made += '\t'*ind+'#'+data[i] + ';\n' 
+			elif type(data[i]) == int:
+				made += '\t'*ind+i + '=' + str(data[i]) + ';\n'
+			elif type(data[i]) == str:
+				made += '\t'*ind+i + '="' + data[i] + '";\n'
+			elif type(data[i]) == bool:
+				made += '\t'*ind+i + '=' + str(data[i]).lower() + ';\n'
+			elif data[i] == None:
+				made += '\t'*ind+i + '=' + 'null;\n'
+			elif type(data[i]) == float:
+				made += '\t'*ind+i + '="' + data[i] + '";\n'
+			elif type(data[i]) == dict:
+				made += '\t'*ind+i+'{\n'+make(data[i],ind+1)+'\t'*ind+'}\n'
+			elif type(data[i]) == list:
+				made += '\t'*ind+i+'='+data[i].__repr__().replace("'",'"')+';\n'
+		else:
+			if 'isComment' in dir(i):
+				if i.visComment == __name__:
+					made += '#'+data[i] + ';' 
+			elif type(data[i]) == int:
+				made += i + '=' + str(data[i]) + ';'
+			elif type(data[i]) == str:
+				made += i + '="' + data[i] + '";'
+			elif type(data[i]) == bool:
+				made += i + '=' + str(data[i]).lower() + ';'
+			elif data[i] == None:
+				made += i + '=' + 'null;'
+			elif type(data[i]) == float:
+				made += i + '="' + data[i] + '";'
+			elif type(data[i]) == dict:
+				made += i+'{'+make(data[i],0,nl=nl)+'}'
+			elif type(data[i]) == list:
+				made += i+'='+data[i].__repr__().replace("'",'"')+';'
+
 	return made
-def dumps(obj):
+def dumps(obj,*flags):
 	'''Creates a SCON file from a dictionary.  
 ##### Attribute info:
 * obj  
   * type: dict
 
 Returns a SCON string'''
-	return make(obj)
-def dump(obj,fp):
+	do_oneline = True
+	for i in flags:
+		if i == FLAGS.ONELINE:
+			do_oneline = False
+	return make(obj,nl=do_oneline)
+def dump(obj,fp,*flags):
 	'''Creates and writes a SCON file from a dictionary.  
 ##### Attribute info:
 * obj
@@ -209,10 +241,14 @@ def dump(obj,fp):
 Make sure that fp is writable.'''
 	if not fp.writable:
 		raise PermissionError("Make sure the file object is writeable")
-	e = make(obj)
+	do_oneline = True
+	for i in flags:
+		if i == FLAGS.ONELINE:
+			do_oneline = False
+	e = make(obj,nl=do_oneline)
 	fp.write(e)
 	fp.close()
-def loads(obj):
+def loads(obj,*flags):
 	'''Creates a dictonary from a SCON string.  
 ##### Attribute info:
 * obj
@@ -220,8 +256,12 @@ def loads(obj):
 
 Make sure that fp is readable.  
 Return a namedtuple: `data` contains the parsed SCON file, `comments` contains the comments from the parsed SCON file.'''
-	return parse(obj)
-def load(fp):
+	do_verify = True
+	for i in flags:
+		if i == FLAGS.NO_VERIFY:
+			do_verify = False
+	return parse(obj,do_verify)
+def load(fp,*flags):
 	'''Creates a dictonary from a SCON file.  
 ##### Attribute info:
 * fp
@@ -231,7 +271,11 @@ Make sure that fp is readable.
 Return a namedtuple: `data` contains the parsed SCON file, `comments` contains the comments from the parsed SCON file. '''
 	if not fp.readable:
 		raise PermissionError("Make sure the file object is readable")
-	return parse(fp.read())
+	do_verify = True
+	for i in flags:
+		if i == FLAGS.NO_VERIFY:
+			do_verify = False
+	return parse(fp.read(),do_verify)
 class Browse:
 	
 	'''Browse a SCON object like a POSIX file path.  
